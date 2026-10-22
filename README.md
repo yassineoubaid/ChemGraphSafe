@@ -303,8 +303,58 @@ authentication, and cached-offline contracts.
 The v1 example uses the policy's fixed `ALLOW`, `REVIEW`, `BLOCK` option order. Laya 0.4.13
 documents [option-position sensitivity](https://github.com/NandhaKishorM/laya/blob/v0.4.13/README.md#option-order)
 and recommends balanced rotations with label-aligned probability averaging. Treat this first run as
-an integration diagnostic, not a fair comparative performance estimate; implement rotations under a
-new run identity before model comparison.
+an integration diagnostic, not a fair comparative performance estimate. Keep its freeze, run, and
+`configs/laya-local.toml` immutable.
+
+Three tracked presets define fresh balanced experiments:
+
+- `configs/laya-scihazard-full-binary-balanced.toml` uses all 228 eligible SciHazard chemistry
+  cases, the binary policy, and new data/run directories.
+- `configs/laya-scisafetybench-balanced.toml` uses all 80 SciSafetyBench chemistry/materials
+  challenge cases, the three-way policy, offline rule annotation, and new data/run directories.
+  Because Laya is restricted to numeric loopback, this local preset needs no hosted-processing
+  approval file.
+- `configs/laya-scisafetybench-risk-type-balanced.toml` evaluates the same 80 cases against their
+  four original source risk categories without converting them to policy actions.
+
+Set by all three presets, `laya_option_order="balanced_cyclic"` places all `k` cyclic orderings for a
+`k`-label policy in one Laya POST. ChemGraphSafe maps every returned option probability back to its
+policy label, takes the label-aligned arithmetic mean, and selects the averaged argmax. These
+derived probabilities have `probability_origin="rotation_averaged"`; they remain uncalibrated and
+must not be described as one native Laya distribution. Each successful rotation-averaged prediction
+retains the request-free component question IDs, option orders, returned choices, distributions, and
+mismatch flags so the average can be independently audited.
+
+With the pinned local service running, prepare and run the balanced experiments separately:
+
+```sh
+uv run chemgraphsafe data prepare --config configs/laya-scihazard-full-binary-balanced.toml
+uv run chemgraphsafe data freeze --config configs/laya-scihazard-full-binary-balanced.toml
+uv run chemgraphsafe smoke --config configs/laya-scihazard-full-binary-balanced.toml
+uv run chemgraphsafe evaluate --config configs/laya-scihazard-full-binary-balanced.toml
+uv run chemgraphsafe report --run runs/laya-scihazard-full-binary-balanced-v2
+
+uv run chemgraphsafe data prepare --config configs/laya-scisafetybench-balanced.toml
+uv run chemgraphsafe data annotate --config configs/laya-scisafetybench-balanced.toml
+uv run chemgraphsafe data freeze --config configs/laya-scisafetybench-balanced.toml
+uv run chemgraphsafe smoke --config configs/laya-scisafetybench-balanced.toml
+uv run chemgraphsafe evaluate --config configs/laya-scisafetybench-balanced.toml
+uv run chemgraphsafe report --run runs/laya-scisafetybench-balanced-v2
+
+uv run chemgraphsafe data prepare --config configs/laya-scisafetybench-risk-type-balanced.toml
+uv run chemgraphsafe data freeze --config configs/laya-scisafetybench-risk-type-balanced.toml
+uv run chemgraphsafe smoke --config configs/laya-scisafetybench-risk-type-balanced.toml
+uv run chemgraphsafe evaluate --config configs/laya-scisafetybench-risk-type-balanced.toml
+uv run chemgraphsafe report --run runs/laya-scisafetybench-risk-type-balanced-v1
+```
+
+One smoke pass for each preset plus all three complete evaluations uses 403 POST attempts before
+retries: `5 + 228 + 5 + 80 + 5 + 80`. Because the binary, three-way, and four-way POSTs contain two,
+three, and four question rows respectively, those attempts contain 1,061 Laya question rows:
+`(5 + 228) * 2 + (5 + 80) * 3 + (5 + 80) * 4`. All presets use the shared 500-attempt ledger; check
+its remaining capacity before starting. Aggregate local results, provenance boundaries, and
+performance limitations are documented in the
+[balanced-rotation evaluation](docs/laya-balanced-evaluation.md).
 
 ## Use Argo or Codex
 

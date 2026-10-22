@@ -56,6 +56,7 @@ def predict_under_policy(adapter, request: Request, policy: dict) -> Prediction:
                 "reason": None,
                 "probabilities": None,
                 "probability_origin": None,
+                "rotation_components": None,
                 "choice_argmax_mismatch": False,
                 "error_code": "schema_error",
             }
@@ -76,6 +77,7 @@ class ModelLabeler:
                     "error_code": "missing_reason_code",
                     "probabilities": None,
                     "probability_origin": None,
+                    "rotation_components": None,
                     "choice_argmax_mismatch": False,
                 }
             )

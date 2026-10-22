@@ -63,6 +63,7 @@ class ModelConfig(Record):
     temperature: float | None = None
     seed: int | None = None
     reasoning_effort: str | None = None
+    laya_option_order: Literal["fixed", "balanced_cyclic"] = "fixed"
 
     @model_validator(mode="after")
     def endpoint_safe(self):
@@ -106,6 +107,8 @@ class ModelConfig(Record):
                 raise ValueError("Laya decision and identity endpoints must share an origin")
             if self.api_key_env != self.api_key_env.strip():
                 raise ValueError("Laya API key environment-variable name cannot contain whitespace")
+        elif self.laya_option_order != "fixed":
+            raise ValueError("laya_option_order is supported only by Laya")
         elif self.identity_endpoint or self.expected_revision:
             raise ValueError("identity_endpoint and expected_revision are supported only by Laya")
         if self.adapter in {"decisions", "chat", "argo"}:
@@ -184,6 +187,10 @@ class ModelConfig(Record):
         if self.adapter != "laya":
             result.pop("identity_endpoint")
             result.pop("expected_revision")
+            result.pop("laya_option_order")
+        elif self.laya_option_order == "fixed":
+            # Preserve existing Laya semantic hashes and immutable fixed-order freezes.
+            result.pop("laya_option_order")
         if self.budget_mode == "usd":
             result.pop("budget_mode")
         return result

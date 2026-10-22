@@ -119,10 +119,41 @@ and averaging the aligned probabilities. A v1 result can therefore validate tran
 accounting, persistence, and response contracts, but it is not a fair comparative estimate of
 Laya's three-class performance.
 
-Keep v1 immutable as the naive diagnostic. A follow-up experiment should send the three cyclic
-orders in one request, validate every returned distribution, retain their provenance, average each
-label's probability, select the averaged argmax, and write to a fresh data/run identity. The
-derived average must not be mislabeled as a single native or calibrated probability distribution.
+Keep v1 immutable as the naive diagnostic. The balanced mode below sends all cyclic orders in one
+request, validates every returned distribution, retains their provenance, averages each label's
+probability, selects the averaged argmax, and writes to a fresh data/run identity. The derived
+average must not be mislabeled as a single native or calibrated probability distribution.
+
+### Balanced cyclic evaluation
+
+Set `laya_option_order="balanced_cyclic"` to make that follow-up explicit. For a policy with `k`
+labels, the adapter puts `k` choice questions in one `/v1/systemone` POST: the canonical order and
+each of its cyclic shifts. It requires exactly one valid distribution per question, maps option
+positions back to the corresponding policy labels, and computes each label's arithmetic mean across
+the rotations. The decision is the averaged argmax. The saved distribution is marked
+`probability_origin="rotation_averaged"`, not `native`; it is a deterministic position-balanced
+derivation and remains uncalibrated. Saved rotation components contain only question IDs, option
+orders, returned choices, distributions, and mismatch flags—never request text—and are validated
+against the saved average so the derivation can be recomputed.
+
+The tracked presets use new experiment identities while leaving `configs/laya-local.toml` and its
+fixed-order `laya-local-v1` artifacts immutable:
+
+- `configs/laya-scihazard-full-binary-balanced.toml` selects the 228 eligible SciHazard chemistry
+  cases, at least 50 per source class, and the two-label policy.
+- `configs/laya-scisafetybench-balanced.toml` selects all 80 chemistry/materials cases under the
+  `challenge_eval` protocol and `scisafetybench-risk-v1` offline annotation rule. Numeric-loopback
+  Laya is local processing, so the preset deliberately has no hosted-processing approval file.
+- `configs/laya-scisafetybench-risk-type-balanced.toml` evaluates the same 80 cases against the
+  four original source risk categories under the `scisafetybench_risk_type` task.
+
+All three use attempts-only accounting and `.local/state/pilot-budget.sqlite`. One POST is one
+adapter attempt even though it contains `k` question rows. Running one five-case smoke pass and the
+complete evaluation for every preset therefore uses 403 POST attempts before retries: 233 binary,
+85 three-way, and 85 four-way. Those POSTs contain 1,061 question rows:
+`233 * 2 + 85 * 3 + 85 * 4`. Check the shared 500-attempt ceiling before starting, especially if it
+already contains earlier calls. See the aggregate local results and their provenance limitations in
+[the balanced-rotation evaluation](laya-balanced-evaluation.md).
 
 ## Hosted Argo
 

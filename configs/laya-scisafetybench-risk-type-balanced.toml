@@ -1,0 +1,37 @@
+# Local Laya evaluation of the complete four-category SciSafetyBench risk-type task.
+# Numeric loopback is local processing, so this preset needs no hosted-processing approval file.
+project_root = ".."
+task = "scisafetybench_risk_type"
+policy_file = "policies/scisafetybench-risk-type-v1.json"
+run_dir = "runs/laya-scisafetybench-risk-type-balanced-v1"
+offline = false
+
+[data]
+loader = "scisafetybench"
+protocol = "challenge_eval"
+directory = ".local/data/laya-scisafetybench-risk-type-balanced-v1"
+revision = "9db8659086fc7acc0be02f8087b189e6585cf1ea"
+count = 80
+seed = 42
+similarity_threshold = 0.9
+
+[budget]
+ledger = ".local/state/pilot-budget.sqlite"
+max_usd = 10.0
+max_attempts = 500
+
+[runner]
+timeout_seconds = 60.0
+retries = 2
+max_retry_after_seconds = 60.0
+
+[[models]]
+name = "laya-english-local-risk-type-balanced"
+adapter = "laya"
+model = "english"
+endpoint = "http://127.0.0.1:18000/v1/systemone"
+identity_endpoint = "http://127.0.0.1:18000/health"
+expected_revision = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
+laya_option_order = "balanced_cyclic"
+budget_mode = "attempts_only"
+max_input_bytes = 32000

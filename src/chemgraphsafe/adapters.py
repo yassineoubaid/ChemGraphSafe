@@ -11,7 +11,7 @@ import httpx
 
 from .budget import BudgetExceeded, Ledger
 from .config import Config, ModelConfig
-from .models import Prediction, Request, policy_labels, question_key
+from .models import LABELS, Prediction, Request, RotationComponent, policy_labels, question_key
 from .prompts import classification_messages, classification_schema
 from .providers import argo_model
 from .storage import canonical, read_json
@@ -94,7 +94,24 @@ def _laya_gate_state(answer: dict) -> str | None:
     return state
 
 
-def _laya_input_truncated(body: dict, *, key: str) -> bool:
+def _laya_cyclic_orders(label_count: int) -> tuple[tuple[int, ...], ...]:
+    return tuple(
+        tuple((index + rotation) % label_count for index in range(label_count))
+        for rotation in range(label_count)
+    )
+
+
+def _laya_question_ids(
+    labels: tuple[str, ...], option_order: str, *, key: str = "triage"
+) -> tuple[str, ...]:
+    if option_order == "fixed":
+        return (key,)
+    if option_order == "balanced_cyclic":
+        return tuple(f"{key}_rotation_{rotation}" for rotation in range(len(labels)))
+    raise ValueError("Unknown Laya option-order strategy")
+
+
+def _laya_input_truncated(body: dict, expected_question_ids=("triage",)) -> bool:
     """Validate Laya 0.4.13's per-request truncation report."""
     usage = body.get("usage")
     if not isinstance(usage, dict):
@@ -115,7 +132,7 @@ def _laya_input_truncated(body: dict, *, key: str) -> bool:
         or not isinstance(questions, list)
         or any(not isinstance(question, str) or not question for question in questions)
         or len(questions) != len(set(questions))
-        or any(question != key for question in questions)
+        or any(question not in expected_question_ids for question in questions)
         or truncated != (dropped > 0)
         or truncated != bool(questions)
     ):
@@ -129,38 +146,70 @@ def parse_laya(
     model: str,
     revision: str,
     policy: dict | None = None,
+    option_order: str = "fixed",
 ) -> Prediction:
     common = usage_fields(body)
     common.pop("provider_cost_usd", None)
     common["returned_model"] = f"{model}@{revision}"
+    labels = policy_labels(policy) if policy is not None else LABELS
     key = question_key(policy)
-    truncated = _laya_input_truncated(body, key=key)
+    question_ids = _laya_question_ids(labels, option_order, key=key)
+    truncated = _laya_input_truncated(body, question_ids)
     routing = body.get("routing")
     if not isinstance(routing, dict) or routing.get("model") != model:
         raise ValueError("Laya response did not use the configured checkpoint")
     answers = body.get("answers")
-    answer = answers.get(key) if isinstance(answers, dict) else None
-    if not isinstance(answer, dict) or answer.get("type") != "choice":
-        raise ValueError(f"Expected a Laya {key} choice answer")
-    probabilities = answer.get("probabilities")
-    if "choice" not in answer or not isinstance(probabilities, dict):
-        raise ValueError("Laya decision omitted its choice or distribution")
-    # Validate the retained answer even when the confidence gate says not to use it.
-    decision = Prediction(
-        status="ok",
-        decision=answer["choice"],
-        probabilities=probabilities,
-        probability_origin="native",
-        **common,
-    ).validate_policy(policy)
-    gate = _laya_gate_state(answer)
+    if not isinstance(answers, dict) or set(answers) != set(question_ids):
+        raise ValueError("Laya response did not contain the exact expected answer set")
+    decisions = []
+    gates = []
+    rotation_components = {}
+    orders = _laya_cyclic_orders(len(labels))
+    for index, question_id in enumerate(question_ids):
+        answer = answers[question_id]
+        if not isinstance(answer, dict) or answer.get("type") != "choice":
+            raise ValueError(f"Expected a Laya {question_id} choice answer")
+        probabilities = answer.get("probabilities")
+        if "choice" not in answer or not isinstance(probabilities, dict):
+            raise ValueError("Laya decision omitted its choice or distribution")
+        # Validate every component even when a confidence gate says not to use it.
+        decisions.append(
+            Prediction(
+                status="ok",
+                decision=answer["choice"],
+                probabilities=probabilities,
+                probability_origin="native",
+                **common,
+            ).validate_policy(policy)
+        )
+        gates.append(_laya_gate_state(answer))
+        if option_order == "balanced_cyclic":
+            rotation_components[question_id] = RotationComponent(
+                option_order=orders[index],
+                choice=answer["choice"],
+                probabilities=probabilities,
+            )
     if truncated:
         return Prediction(status="error", error_code="input_truncated", **common)
-    if gate == "abstained":
-        return Prediction(status="abstain", error_code="provider_abstention", **common)
-    if gate == "unevaluated":
+    if "unevaluated" in gates:
         return Prediction(status="error", error_code="abstention_unevaluated", **common)
-    return decision
+    if "abstained" in gates:
+        return Prediction(status="abstain", error_code="provider_abstention", **common)
+    if option_order == "fixed":
+        return decisions[0]
+    probabilities = {
+        label: math.fsum(decision.probabilities[label] for decision in decisions) / len(decisions)
+        for label in labels
+    }
+    decision = max(labels, key=probabilities.__getitem__)
+    return Prediction(
+        status="ok",
+        decision=decision,
+        probabilities=probabilities,
+        probability_origin="rotation_averaged",
+        rotation_components=rotation_components,
+        **common,
+    ).validate_policy(policy)
 
 
 def parse_chat(body: dict, curator: bool = False, *, policy: dict | None = None) -> Prediction:
@@ -461,25 +510,45 @@ class LayaModel(HTTPModel):
         )
         if not isinstance(device, str) or not device:
             raise ValueError("Laya identity preflight omitted the checkpoint device")
-        return {
+        result = {
             "model": self.model.model,
             "revision": self.model.expected_revision,
             "device": device,
         }
+        if self.model.laya_option_order == "balanced_cyclic":
+            labels = policy_labels(self.config.policy)
+            key = question_key(self.config.policy)
+            result["option_rotation"] = {
+                "protocol": "balanced_cyclic_v1",
+                "labels": list(labels),
+                "question_ids": list(_laya_question_ids(labels, "balanced_cyclic", key=key)),
+                "option_orders": [list(order) for order in _laya_cyclic_orders(len(labels))],
+                "aggregation": "arithmetic_mean_by_label",
+                "tie_break": list(labels),
+                "question_rows_per_attempt": len(labels),
+            }
+        return result
 
     def payload(self, request: Request, policy: dict) -> dict:
+        labels = policy_labels(policy)
+        question_ids = _laya_question_ids(
+            labels, self.model.laya_option_order, key=question_key(policy)
+        )
+        orders = _laya_cyclic_orders(len(labels))
+        questions = {}
+        for index, question_id in enumerate(question_ids):
+            question = {
+                "type": "choice",
+                "instructions": policy["instructions"],
+                "criteria": {label: policy["criteria"][label] for label in labels},
+            }
+            if self.model.laya_option_order == "balanced_cyclic":
+                question["option_order"] = list(orders[index])
+            questions[question_id] = question
         return {
             "model": self.model.model,
             "state": request.model_dump(),
-            "questions": {
-                question_key(policy): {
-                    "type": "choice",
-                    "instructions": policy["instructions"],
-                    "criteria": {
-                        label: policy["criteria"][label] for label in policy_labels(policy)
-                    },
-                }
-            },
+            "questions": questions,
         }
 
     def response_fields(self, body: dict) -> dict:
@@ -496,6 +565,7 @@ class LayaModel(HTTPModel):
             model=self.runtime_provenance["model"],
             revision=self.runtime_provenance["revision"],
             policy=policy,
+            option_order=self.model.laya_option_order,
         )
 
 

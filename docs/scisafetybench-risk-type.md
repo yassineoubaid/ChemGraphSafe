@@ -40,7 +40,10 @@ missing/extra probability classes, and invalid distributions fail validation.
 Laya retains its checkpoint preflight, truncation validation, and local/hosted processing rules.
 It uses the four categories in the table's fixed order. The existing
 [option-order limitation](llm-adapters.md#laya-local-service) also applies to this diagnostic;
-balanced rotations remain a separate experiment.
+balanced rotations remain a separate experiment. The local
+`configs/laya-scisafetybench-risk-type-balanced.toml` preset runs all four cyclic orders and retains
+request-free component distributions for auditability; see its
+[aggregate local evaluation](laya-balanced-evaluation.md).
 
 Every model receives only the original request text/context and the shared definition. The
 candidate names are visible to all examples; the correct answer and example metadata are not.
