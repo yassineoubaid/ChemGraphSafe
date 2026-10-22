@@ -1,0 +1,39 @@
+# Complete eligible SciHazard chemistry set: 50 benign + 178 harmful (228 total).
+# Separate from the 100-case, three-way Laya pilot and its immutable freeze.
+project_root = ".."
+policy_file = "policies/triage-binary-v0.1.json"
+run_dir = "runs/laya-scihazard-228-binary-v1"
+offline = false
+
+[data]
+loader = "scihazard"
+directory = ".local/data/laya-scihazard-228-binary-v1"
+revision = "f8809e5af23495e469dfc53e99973f74031fcb11"
+count = 228
+minimum_per_class = 40
+seed = 42
+similarity_threshold = 0.9
+# If a Jev 228-case freeze is provided, set inherited_freeze BEFORE prepare,
+# using its verified exact local path to guarantee identical case order/splits.
+# inherited_freeze = ".local/data/jev-228-binary/freeze.json"
+
+[budget]
+# Keeps the project's cumulative account. Do not reset the ledger.
+ledger = ".local/state/pilot-budget.sqlite"
+max_usd = 10.0
+max_attempts = 500
+
+[runner]
+timeout_seconds = 60.0
+retries = 2
+max_retry_after_seconds = 60.0
+
+[[models]]
+name = "laya-english-228-binary"
+adapter = "laya"
+model = "english"
+endpoint = "http://127.0.0.1:18000/v1/systemone"
+identity_endpoint = "http://127.0.0.1:18000/health"
+expected_revision = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
+budget_mode = "attempts_only"
+max_input_bytes = 32000
